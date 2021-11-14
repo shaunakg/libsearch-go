@@ -45,12 +45,11 @@ func main() {
 
 	http.HandleFunc("/", search)
 
-	http.ListenAndServe(":" + port, nil)
+	http.ListenAndServe(":"+port, nil)
 
 }
 
-
-func RequestAndParseOverdrive(url string, ch chan interface{}) {
+func RequestAndParseOverdrive(url string, domain string, ch chan interface{}) {
 
 	// This function makes the HTTP request, parses out the JSON and sends the results to the channel.
 	startTime := time.Now()
@@ -78,6 +77,10 @@ func RequestAndParseOverdrive(url string, ch chan interface{}) {
 	re := regexp.MustCompile(`window.OverDrive.mediaItems = (.*);`)
 	match := re.FindStringSubmatch(html)
 
+	// Search the HTML for the library ID
+	re_id := regexp.MustCompile(`window.OverDrive.tenant = (.*);`)
+	match_id := re_id.FindStringSubmatch(html)
+
 	// If there is a match, decode the JSON and return the results
 	if len(match) > 0 {
 
@@ -86,7 +89,12 @@ func RequestAndParseOverdrive(url string, ch chan interface{}) {
 		var data map[string]interface{}
 		json.Unmarshal([]byte(match[1]), &data)
 
-		ch <- data
+		out := map[string]interface{}{
+			"library": match_id[1],
+			"data":    data,
+		}
+
+		ch <- out
 
 	}
 
@@ -161,7 +169,7 @@ func search(w http.ResponseWriter, r *http.Request) {
 		// Add query to the end of the URL and encode it
 		url := fmt.Sprintf(services["overdrive"].Url, domain) + "?query=" + url.QueryEscape(query)
 
-		go RequestAndParseOverdrive(url, channel)
+		go RequestAndParseOverdrive(url, domain, channel)
 
 	}
 
