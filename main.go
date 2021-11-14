@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -32,12 +33,85 @@ func main() {
 
 	log.Info("Starting server")
 
+	// Determine port for HTTP service.
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.WithFields(log.Fields{
+		"port": port,
+	}).Info("HTTP server listening on port")
+
 	http.HandleFunc("/", search)
-	http.ListenAndServe(":8080", nil)
+
+	http.ListenAndServe(":" + port, nil)
+
+}
+
+
+func RequestAndParseOverdrive(url string, ch chan interface{}) {
+
+	// This function makes the HTTP request, parses out the JSON and sends the results to the channel.
+	startTime := time.Now()
+
+	// Make a GET request to the Overdrive search URL with the query as a search param
+	log.WithFields(log.Fields{
+		"url": url,
+	}).Info("Making GET request")
+
+	resp, err := http.Get(url)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	// Read the response body
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	// Get the HTML response into a string
+	html := string(body)
+
+	// Search the HTML using regex for the JSON content
+	re := regexp.MustCompile(`window.OverDrive.mediaItems = (.*);`)
+	match := re.FindStringSubmatch(html)
+
+	// If there is a match, decode the JSON and return the results
+	if len(match) > 0 {
+
+		log.Info("Found Overdrive results")
+
+		var data map[string]interface{}
+		json.Unmarshal([]byte(match[1]), &data)
+
+		ch <- data
+
+	}
+
+	log.WithFields(log.Fields{
+		"duration": time.Since(startTime),
+	}).Info("Request completed")
+
 }
 
 // Search function
 func search(w http.ResponseWriter, r *http.Request) {
+
+	startTime := time.Now()
+
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Get the 'search' query parameter
+	query := r.URL.Query().Get("query")
+
+	// Reject request if the query param is not found or if the length is zero
+	if query == "" || len(query) == 0 {
+		log.Error("Query parameter not found")
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	// Initialize "service" struct with fields name, url and domains. Domains is a slice with any number of strings.
 	type service struct {
@@ -70,12 +144,11 @@ func search(w http.ResponseWriter, r *http.Request) {
 		Overdrive: []interface{}{},
 	}
 
-	// Get the 'search' query parameter
-	query := r.URL.Query().Get("query")
-
 	log.WithFields(log.Fields{
 		"query": query,
 	}).Info("Search query received")
+
+	channel := make(chan interface{})
 
 	// Do Overdrive processing
 	for _, domain := range services["overdrive"].Domains {
@@ -88,42 +161,13 @@ func search(w http.ResponseWriter, r *http.Request) {
 		// Add query to the end of the URL and encode it
 		url := fmt.Sprintf(services["overdrive"].Url, domain) + "?query=" + url.QueryEscape(query)
 
-		// Make a GET request to the Overdrive search URL with the query as a search param
-		log.WithFields(log.Fields{
-			"url": url,
-		}).Info("Making GET request")
+		go RequestAndParseOverdrive(url, channel)
 
-		resp, err := http.Get(url)
-		if err != nil {
-			fmt.Println(err)
-		}
+	}
 
-		// Read the response body
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			fmt.Println(err)
-		}
-
-		// Get the HTML response into a string
-		html := string(body)
-
-		// Search the HTML using regex for the JSON content
-		re := regexp.MustCompile(`window.OverDrive.mediaItems = (.*);`)
-		match := re.FindStringSubmatch(html)
-
-		// If there is a match, decode the JSON and return the results
-		if len(match) > 0 {
-
-			log.Info("Found Overdrive results")
-
-			var data map[string]interface{}
-			json.Unmarshal([]byte(match[1]), &data)
-
-			// Add the results to the searchResponse struct
-			searchResponse.Overdrive = append(searchResponse.Overdrive, data)
-
-		}
-
+	// Get all the results from the channel
+	for i := 0; i < len(services["overdrive"].Domains); i++ {
+		searchResponse.Overdrive = append(searchResponse.Overdrive, <-channel)
 	}
 
 	log.Info("Returning searchResponse")
@@ -131,5 +175,9 @@ func search(w http.ResponseWriter, r *http.Request) {
 	// Send the JSON to the client
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(searchResponse)
+
+	log.WithFields(log.Fields{
+		"duration": time.Since(startTime),
+	}).Info("Search completed")
 
 }
