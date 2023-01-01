@@ -59,7 +59,18 @@ func RequestAndParseOverdrive(url string, domain string, ch chan interface{}) {
 		"url": url,
 	}).Info("Making GET request")
 
-	resp, err := http.Get(url)
+	// make the GET request with a browser user agent
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", url, nil)
+
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.132 Safari/537.36")
+
+	resp, err := client.Do(req)
+
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -81,6 +92,8 @@ func RequestAndParseOverdrive(url string, domain string, ch chan interface{}) {
 	re_id := regexp.MustCompile(`window.OverDrive.tenant = (.*);`)
 	match_id := re_id.FindStringSubmatch(html)
 
+	log.Info(match_id)
+
 	// If there is a match, decode the JSON and return the results
 	if len(match) > 0 {
 
@@ -95,6 +108,11 @@ func RequestAndParseOverdrive(url string, domain string, ch chan interface{}) {
 		}
 
 		ch <- out
+
+	} else {
+
+		log.Info("No Overdrive results found")
+		ch <- nil
 
 	}
 
@@ -156,6 +174,8 @@ func search(w http.ResponseWriter, r *http.Request) {
 		"query": query,
 	}).Info("Search query received")
 
+	// Make the channel that the concurrent
+	// goroutines will output into
 	channel := make(chan interface{})
 
 	// Do Overdrive processing
@@ -175,7 +195,18 @@ func search(w http.ResponseWriter, r *http.Request) {
 
 	// Get all the results from the channel
 	for i := 0; i < len(services["overdrive"].Domains); i++ {
-		searchResponse.Overdrive = append(searchResponse.Overdrive, <-channel)
+
+		// Assign channel output to a variable
+		result := <-channel
+
+		// If the result is nil, skip it
+		if result == nil {
+			continue
+		}
+
+		// Append the results to the searchResponse struct
+		searchResponse.Overdrive = append(searchResponse.Overdrive, result)
+
 	}
 
 	log.Info("Returning searchResponse")
