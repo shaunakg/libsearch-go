@@ -151,7 +151,7 @@ func search(w http.ResponseWriter, r *http.Request) {
 		"overdrive": service{
 			Name:    "Overdrive",
 			Url:     "https://%s.overdrive.com/search",
-			Domains: []string{"lapl", "nypl", "erl", "portphillip", "boroondara", "baysidelibrary"},
+			Domains: []string{"lapl", "erl", "portphillip", "boroondara", "baysidelibrary"},
 		},
 		"cloudlibrary": service{
 			Name:    "Cloud Library",
